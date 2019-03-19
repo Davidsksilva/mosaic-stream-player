@@ -121,6 +121,10 @@ typedef struct VideoState {
     int last_video_stream, last_audio_stream, last_subtitle_stream;
 
     SDL_cond *continue_read_thread;
+
+    AVDictionary *format_opts;
+    AVDictionary *codec_opts;
+    AVDictionary *resample_opts;
 } VideoState;
 
 #endif
