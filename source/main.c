@@ -25,6 +25,8 @@ typedef struct master_video{
     int paused;
     int force_refresh;
     VideoState ** videos;
+    int show_mode;
+    int window_open;
 } MasterVideo;
 
 MasterVideo* master_video;
@@ -84,6 +86,7 @@ SDL_mutex *lock;
 SDL_cond *cond;
 
 SDL_mutex * force_refresh_mutex;
+SDL_mutex * show_mode_mutex;
 
 void update_display_frames(){
 
@@ -621,7 +624,7 @@ static int read_thread(void *arg)
     if (find_stream_info) {
         AVDictionary **opts = setup_find_stream_info_opts(ic, is->codec_opts);
         int orig_nb_streams = ic->nb_streams;
-        ic->max_analyze_duration = 500;
+        ic->max_analyze_duration = 50000;
         err = avformat_find_stream_info(ic, opts);
 
         for (i = 0; i < orig_nb_streams; i++)
@@ -722,6 +725,7 @@ static int read_thread(void *arg)
     if (is->show_mode == SHOW_MODE_NONE)
         is->show_mode = ret >= 0 ? SHOW_MODE_VIDEO : SHOW_MODE_RDFT;
 
+
     if (st_index[AVMEDIA_TYPE_SUBTITLE] >= 0) {
         stream_component_open(is, st_index[AVMEDIA_TYPE_SUBTITLE]);
     }
@@ -732,6 +736,10 @@ static int read_thread(void *arg)
         ret = -1;
         goto fail;
     }
+
+    SDL_LockMutex(show_mode_mutex);
+    master_video->show_mode = is->show_mode;
+    SDL_UnlockMutex(show_mode_mutex);
 
     if (infinite_buffer < 0 && is->realtime)
         infinite_buffer = 1;
@@ -940,6 +948,32 @@ static void do_exit(VideoState *is)
 
 }
 
+static void do_exit_()
+{
+    for(int i = 0; i < STREAMS_NUMBER; i++){
+
+        if (master_video->videos[i]) {
+            stream_close(master_video->videos[i]);
+        }
+    }
+    if (renderer)
+        SDL_DestroyRenderer(renderer);
+    if (window)
+        SDL_DestroyWindow(window);
+    av_lockmgr_register(NULL);
+    //uninit_opts();
+#if CONFIG_AVFILTER
+    av_freep(&vfilters_list);
+#endif
+    avformat_network_deinit();
+    if (show_status)
+        printf("\n");
+    SDL_Quit();
+    av_log(NULL, AV_LOG_QUIET, "%s", "");
+    exit(0);
+
+}
+
 static void do_exit_all(VideoState ** is)
 {
     for(int i = 0; i < STREAMS_NUMBER; i++){
@@ -1111,6 +1145,36 @@ void video_image_display(VideoState *is)
 
 }
 
+void video_image_display_(VideoState ** videos)
+{
+    Frame *vp;
+    Frame *sp = NULL;
+    SDL_Rect rect;
+
+    for(int i = 0; i < STREAMS_NUMBER; i++){
+
+        if (videos[i]->video_st){
+
+            vp = frame_queue_peek_last(&videos[i]->pictq);
+
+            calculate_display_rect_id(&rect, videos[i]->xleft, videos[i]->ytop, videos[i]->width, videos[i]->height, vp->width, vp->height, vp->sar,videos[i]->id);
+
+            if (!vp->uploaded) {
+                frames[videos[i]->id] = *(vp->frame);
+                if (upload_texture(&videos[i]->vid_texture, vp->frame, &videos[i]->img_convert_ctx,renderer) < 0)
+                    return;
+                vp->uploaded = 1;
+                vp->flip_v = vp->frame->linesize[0] < 0;
+            }
+
+            SDL_RenderCopyEx(renderer, videos[i]->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
+        }
+    }
+       
+   
+
+}
+
 int video_open(VideoState *is)
 {
     int w,h;
@@ -1138,6 +1202,36 @@ int video_open(VideoState *is)
 
     return 0;
 }
+
+int video_open_()
+{
+    int w,h;
+
+    if (screen_width) {
+        w = screen_width;
+        h = screen_height;
+    } else {
+        w = default_width;
+        h = default_height;
+    }
+
+    if (!window_title)
+        window_title =  "Player";
+
+    SDL_SetWindowTitle(window, window_title);
+
+    SDL_SetWindowSize(window, w, h);
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    if (is_full_screen)
+        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    SDL_ShowWindow(window);
+
+    //is->width  = w;
+    //is->height = h;
+    master_video->window_open = 1;
+
+    return 0;
+}
 SDL_mutex* display_mutex;
 /* display the current picture, if any */
 void video_display(VideoState *is)
@@ -1160,28 +1254,22 @@ void video_display(VideoState *is)
    
 }
 
-/* merge saved frames and update texture*/
-void videos_display(){
+/* display the current picture, if any */
+void video_display_()
+{ 
+    
+    if (!master_video->window_open){
+        video_open_();
+    }
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
 
-    // Initialize the AVFrame
-    AVFrame* merged_frame = av_frame_alloc();
-    merged_frame->width = 1280;
-    merged_frame->height = 960;
-    merged_frame->format = AV_PIX_FMT_YUV420P;
+    //if (is->video_st)
+    video_image_display_(master_video->videos);
+    
+    SDL_RenderPresent(renderer);
 
-    // Allocate a buffer large enough for all data
-    int size = avpicture_get_size(merged_frame->format, merged_frame->width, merged_frame->height);
-    uint8_t* buffer = (uint8_t*)av_malloc(size);
-
-    // Initialize frame->linesize and frame->data pointers
-    avpicture_fill((AVPicture*)merged_frame, buffer, merged_frame->format, merged_frame->width, merged_frame->height);
-
-    /* merge frames */
-    SDL_Texture *vid_texture;
-    struct SwsContext *img_convert_ctx;
-    if (upload_texture(&vid_texture, merged_frame, &img_convert_ctx,renderer) < 0)
-            return;
-
+   
 }
 
 double compute_target_delay(double delay, VideoState *is)
@@ -1328,9 +1416,7 @@ retry:
 
             frame_queue_next(&is->pictq);
             is->force_refresh = 1;
-            SDL_LockMutex(force_refresh_mutex);
-            master_video->force_refresh = 1;
-            SDL_UnlockMutex(force_refresh_mutex);
+            
 
         }
 display:
@@ -1381,123 +1467,94 @@ display:
 }
 
 /* called to display each frame */
-/*static void video_refresh_all(VideoState ** videos, double *remaining_time)
+static void video_refresh_(VideoState ** videos, double *remaining_time)
 {
     double time;
 
     Frame *sp, *sp2;
 
-    if (!is->paused && get_master_sync_type(is) == AV_SYNC_EXTERNAL_CLOCK && is->realtime)
-        check_external_clock_speed(is);
-
-    if (!display_disable && is->show_mode != SHOW_MODE_VIDEO && is->audio_st) {
-        time = av_gettime_relative() / 1000000.0;
-        if (is->force_refresh || is->last_vis_time + rdftspeed < time) {
-            video_display(is);
-            is->last_vis_time = time;
+    for(int i = 0; i < STREAMS_NUMBER;i++){
+        if (!videos[i]->paused && get_master_sync_type(videos[i]) == AV_SYNC_EXTERNAL_CLOCK && videos[i]->realtime){
+            check_external_clock_speed(videos[i]);
         }
-        *remaining_time = FFMIN(*remaining_time, is->last_vis_time + rdftspeed - time);
-    }
-
-    if (is->video_st) {
-retry:
-        if (frame_queue_nb_remaining(&is->pictq) == 0) {
-            // nothing to do, no picture to display in the queue
-        } else {
-            double last_duration, duration, delay;
-            Frame *vp, *lastvp;
-
-            /* dequeue the picture */
-            /*
-            lastvp = frame_queue_peek_last(&is->pictq);
-            vp = frame_queue_peek(&is->pictq);
-
-            if (vp->serial != is->videoq.serial) {
-                frame_queue_next(&is->pictq);
-                goto retry;
+        if (!display_disable && videos[i]->show_mode != SHOW_MODE_VIDEO && videos[i]->audio_st) {
+            time = av_gettime_relative() / 1000000.0;
+            if (videos[i]->force_refresh || videos[i]->last_vis_time + rdftspeed < time) {
+                video_display_();
+                videos[i]->last_vis_time = time;
             }
+            *remaining_time = FFMIN(*remaining_time, videos[i]->last_vis_time + rdftspeed - time);
+        }
+    
 
-            if (lastvp->serial != vp->serial)
-                is->frame_timer = av_gettime_relative() / 1000000.0;
+        if (videos[i]->video_st) {
+    retry:
+            if (frame_queue_nb_remaining(&videos[i]->pictq) == 0) {
+                // nothing to do, no picture to display in the queue
+            } else {
+                double last_duration, duration, delay;
+                Frame *vp, *lastvp;
 
-            if (is->paused)
-                goto display;
+                /* dequeue the picture */
+                
+                lastvp = frame_queue_peek_last(&videos[i]->pictq);
+                vp = frame_queue_peek(&videos[i]->pictq);
 
-            /* compute nominal last_duration */
-            /*
-            last_duration = vp_duration(is, lastvp, vp);
-            delay = compute_target_delay(last_duration, is);
-
-            time= av_gettime_relative()/1000000.0;
-            if (time < is->frame_timer + delay) {
-                *remaining_time = FFMIN(is->frame_timer + delay - time, *remaining_time);
-                goto display;
-            }
-
-            is->frame_timer += delay;
-            if (delay > 0 && time - is->frame_timer > AV_SYNC_THRESHOLD_MAX)
-                is->frame_timer = time;
-
-            SDL_LockMutex(is->pictq.mutex);
-            if (!isnan(vp->pts))
-                update_video_pts(is, vp->pts, vp->pos, vp->serial);
-            SDL_UnlockMutex(is->pictq.mutex);
-
-            if (frame_queue_nb_remaining(&is->pictq) > 1) {
-                Frame *nextvp = frame_queue_peek_next(&is->pictq);
-                duration = vp_duration(is, vp, nextvp);
-                if(!is->step && (framedrop>0 || (framedrop && get_master_sync_type(is) != AV_SYNC_VIDEO_MASTER)) && time > is->frame_timer + duration){
-                    is->frame_drops_late++;
-                    frame_queue_next(&is->pictq);
+                if (vp->serial != videos[i]->videoq.serial) {
+                    frame_queue_next(&videos[i]->pictq);
                     goto retry;
                 }
-            }
 
-            if (is->subtitle_st) {
-                    while (frame_queue_nb_remaining(&is->subpq) > 0) {
-                        sp = frame_queue_peek(&is->subpq);
+                if (lastvp->serial != vp->serial)
+                    videos[i]->frame_timer = av_gettime_relative() / 1000000.0;
 
-                        if (frame_queue_nb_remaining(&is->subpq) > 1)
-                            sp2 = frame_queue_peek_next(&is->subpq);
-                        else
-                            sp2 = NULL;
+                if (videos[i]->paused)
+                    goto display;
 
-                        if (sp->serial != is->subtitleq.serial
-                                || (is->vidclk.pts > (sp->pts + ((float) sp->sub.end_display_time / 1000)))
-                                || (sp2 && is->vidclk.pts > (sp2->pts + ((float) sp2->sub.start_display_time / 1000))))
-                        {
-                            if (sp->uploaded) {
-                                int i;
-                                for (i = 0; i < sp->sub.num_rects; i++) {
-                                    AVSubtitleRect *sub_rect = sp->sub.rects[i];
-                                    uint8_t *pixels;
-                                    int pitch, j;
+                /* compute nominal last_duration */
+                
+                last_duration = vp_duration(videos[i], lastvp, vp);
+                delay = compute_target_delay(last_duration, videos[i]);
 
-                                    if (!SDL_LockTexture(is->sub_texture, (SDL_Rect *)sub_rect, (void **)&pixels, &pitch)) {
-                                        for (j = 0; j < sub_rect->h; j++, pixels += pitch)
-                                            memset(pixels, 0, sub_rect->w << 2);
-                                        SDL_UnlockTexture(is->sub_texture);
-                                    }
-                                }
-                            }
-                            frame_queue_next(&is->subpq);
-                        } else {
-                            break;
-                        }
+                time= av_gettime_relative()/1000000.0;
+                if (time < videos[i]->frame_timer + delay) {
+                    *remaining_time = FFMIN(videos[i]->frame_timer + delay - time, *remaining_time);
+                    goto display;
+                }
+
+                videos[i]->frame_timer += delay;
+                if (delay > 0 && time - videos[i]->frame_timer > AV_SYNC_THRESHOLD_MAX)
+                    videos[i]->frame_timer = time;
+
+                SDL_LockMutex(videos[i]->pictq.mutex);
+                if (!isnan(vp->pts))
+                    update_video_pts(videos[i], vp->pts, vp->pos, vp->serial);
+                SDL_UnlockMutex(videos[i]->pictq.mutex);
+
+                if (frame_queue_nb_remaining(&videos[i]->pictq) > 1) {
+                    Frame *nextvp = frame_queue_peek_next(&videos[i]->pictq);
+                    duration = vp_duration(videos[i], vp, nextvp);
+                    if(!videos[i]->step && (framedrop>0 || (framedrop && get_master_sync_type(videos[i]) != AV_SYNC_VIDEO_MASTER)) && time > videos[i]->frame_timer + duration){
+                        videos[i]->frame_drops_late++;
+                        frame_queue_next(&videos[i]->pictq);
+                        goto retry;
                     }
+                }
+
+                frame_queue_next(&videos[i]->pictq);
+                videos[i]->force_refresh = 1;
+                SDL_LockMutex(force_refresh_mutex);
+                master_video->force_refresh = 1;
+                SDL_UnlockMutex(force_refresh_mutex);
+
             }
-
-            frame_queue_next(&is->pictq);
-            is->force_refresh = 1;
-
+    display:
+            /* display picture */
+            
+            if (!display_disable && videos[i]->force_refresh && videos[i]->show_mode == SHOW_MODE_VIDEO && videos[i]->pictq.rindex_shown)
+                video_display_();
         }
-display:
-        /* display picture */
-        /*
-        if (!display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
-            video_display(is);
-    }
-    is->force_refresh = 0;
+    videos[i]->force_refresh = 0;
     if (show_status) {
         static int64_t last_time;
         int64_t cur_time;
@@ -1509,35 +1566,37 @@ display:
             aqsize = 0;
             vqsize = 0;
             sqsize = 0;
-            if (is->audio_st)
-                aqsize = is->audioq.size;
-            if (is->video_st)
-                vqsize = is->videoq.size;
-            if (is->subtitle_st)
-                sqsize = is->subtitleq.size;
+            if (videos[i]->audio_st)
+                aqsize = videos[i]->audioq.size;
+            if (videos[i]->video_st)
+                vqsize = videos[i]->videoq.size;
+            if (videos[i]->subtitle_st)
+                sqsize = videos[i]->subtitleq.size;
             av_diff = 0;
-            if (is->audio_st && is->video_st)
-                av_diff = get_clock(&is->audclk) - get_clock(&is->vidclk);
-            else if (is->video_st)
-                av_diff = get_master_clock(is) - get_clock(&is->vidclk);
-            else if (is->audio_st)
-                av_diff = get_master_clock(is) - get_clock(&is->audclk);
+            if (videos[i]->audio_st && videos[i]->video_st)
+                av_diff = get_clock(&videos[i]->audclk) - get_clock(&videos[i]->vidclk);
+            else if (videos[i]->video_st)
+                av_diff = get_master_clock(videos[i]) - get_clock(&videos[i]->vidclk);
+            else if (videos[i]->audio_st)
+                av_diff = get_master_clock(videos[i]) - get_clock(&videos[i]->audclk);
             av_log(NULL, AV_LOG_INFO,
                    "%7.2f %s:%7.3f fd=%4d aq=%5dKB vq=%5dKB sq=%5dB f=%"PRId64"/%"PRId64"   \r",
-                   get_master_clock(is),
-                   (is->audio_st && is->video_st) ? "A-V" : (is->video_st ? "M-V" : (is->audio_st ? "M-A" : "   ")),
+                   get_master_clock(videos[i]),
+                   (videos[i]->audio_st && videos[i]->video_st) ? "A-V" : (videos[i]->video_st ? "M-V" : (videos[i]->audio_st ? "M-A" : "   ")),
                    av_diff,
-                   is->frame_drops_early + is->frame_drops_late,
+                   videos[i]->frame_drops_early + videos[i]->frame_drops_late,
                    aqsize / 1024,
                    vqsize / 1024,
                    sqsize,
-                   is->video_st ? is->viddec.avctx->pts_correction_num_faulty_dts : 0,
-                   is->video_st ? is->viddec.avctx->pts_correction_num_faulty_pts : 0);
+                   videos[i]->video_st ? videos[i]->viddec.avctx->pts_correction_num_faulty_dts : 0,
+                   videos[i]->video_st ? videos[i]->viddec.avctx->pts_correction_num_faulty_pts : 0);
             fflush(stdout);
             last_time = cur_time;
         }
     }
-}*/
+}
+   
+}
 
 void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
     double remaining_time = 0.0;
@@ -1557,6 +1616,7 @@ void refresh_loop_wait_event(VideoState *is, SDL_Event *event) {
 }
 
 void refresh_loop_wait_event_(SDL_Event *event){
+
     double remaining_time = 0.0;
     SDL_PumpEvents();
     while (!SDL_PeepEvents(event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT)) {
@@ -1567,8 +1627,9 @@ void refresh_loop_wait_event_(SDL_Event *event){
         if (remaining_time > 0.0)
             av_usleep((int64_t)(remaining_time * 1000000.0));
         remaining_time = REFRESH_RATE;
-        if (videos[0]->show_mode != SHOW_MODE_NONE && (!videos[0]->paused || videos[0]->force_refresh))
-           // video_refresh_all(videos, &remaining_time);
+
+        if (master_video->show_mode != SHOW_MODE_NONE && (!master_video->paused || master_video->force_refresh))
+            video_refresh_(master_video->videos, &remaining_time);
         SDL_PumpEvents();
     }
 }
@@ -1578,30 +1639,22 @@ void event_loop_()
 {
     SDL_Event event;
     double incr, pos, frac;
-
+    
     for (;;) {
+        av_log(NULL, AV_LOG_WARNING, "Loop\n");
         double x;
-
         refresh_loop_wait_event_(&event);
-
-        for(int i =0; i < STREAMS_NUMBER; i++){
-                      refresh_loop_wait_event(cur_stream[i], &event);
-        }
      
         switch (event.type) {
         case SDL_KEYDOWN:
             if (exit_on_keydown) {
-                for(int i =0; i < STREAMS_NUMBER; i++){
-                    do_exit(cur_stream[i]);
-                }
+                do_exit_();
                 break;
             }
             switch (event.key.keysym.sym) {
             case SDLK_ESCAPE:
             case SDLK_q:
-                for(int i =0; i < STREAMS_NUMBER; i++){
-                    do_exit(cur_stream[i]);
-                }
+                do_exit_();
                 break;
             default:
                 break;
@@ -1609,9 +1662,7 @@ void event_loop_()
             break;
         case SDL_MOUSEBUTTONDOWN:
             if (exit_on_mousedown) {
-                for(int i =0; i < STREAMS_NUMBER; i++){
-                    do_exit(cur_stream[i]);
-                }
+                do_exit_();
                 break;
             }
         case SDL_MOUSEMOTION:
@@ -1632,9 +1683,7 @@ void event_loop_()
             break;
         case SDL_QUIT:
         case FF_QUIT_EVENT:
-            for(int i =0; i < STREAMS_NUMBER; i++){
-                do_exit(cur_stream[i]);
-            }
+            do_exit_();
             break;
         default:
             break;
@@ -1795,6 +1844,8 @@ int main(int argc, char **argv)
     master_video->videos = (VideoState**) malloc(sizeof(VideoState*)*STREAMS_NUMBER);
 
     master_video->paused = 1;
+    master_video->show_mode = SHOW_MODE_NONE;
+    master_video->window_open = 0;
 
     //init_dynload();
 
@@ -1830,6 +1881,7 @@ int main(int argc, char **argv)
 
 	display_mutex = SDL_CreateMutex();
     force_refresh_mutex = SDL_CreateMutex();
+    show_mode_mutex = SDL_CreateMutex();
 
     if (!display_disable) {
 
@@ -1864,20 +1916,14 @@ int main(int argc, char **argv)
     for(int i= 0; i < STREAMS_NUMBER; i ++){
         master_video->videos[i] = stream_open(argv[i+1], file_iformat,master_video->videos[i],i);
     }
-    
-    //SDL_Delay(3000);  // Pause execution for 3000 milliseconds, for example
-    // Close and destroy the window
-    //SDL_DestroyWindow(window);
-    //SDL_Quit();
+     av_log(NULL, AV_LOG_WARNING, "Loop\n");
 
-    event_loop(master_video->videos);
+    video_open_();
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
     
-    
-    while(1){
-        if(exit_cond == 1){
-            do_exit_all(videos);
-        }
-    }   
+    //event_loop(master_video->videos);
+    event_loop_();
 
 
     /* never returns */
