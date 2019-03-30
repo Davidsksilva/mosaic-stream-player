@@ -1,2 +1,2 @@
-# LAVID-Player
+# Mosaic-Player
 Video Streams Player
