@@ -79,8 +79,4 @@
 
 #define USE_ONEPASS_SUBTITLE_RENDER 1
 
-#define STREAMS_NUMBER 4
-
-
-
 #endif

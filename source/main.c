@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "structs.h"
 #include "utils.h"
+#include "config.h"
 #include "video_state_utils.h"
 #include "sdl_utils.h"
 
