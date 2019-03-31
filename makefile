@@ -1,18 +1,18 @@
 CXXFLAGS := -O3
-CXX = gcc
+CXX = g++
 
 VIDEO := 
 SOURCEDIR = source
 BUILDIR = build
 TARGET = player
 
-SOURCE := $(wildcard $(SOURCEDIR)/*.c)
+SOURCE := $(wildcard $(SOURCEDIR)/*.cpp)
 
-DEPS := $(SOURCE:.c=.d)
+DEPS := $(SOURCE:.cpp=.d)
 
-OBJS = $(SOURCE:.c=.o)
+OBJS = $(SOURCE:.cpp=.o)
 
-LIBS := -lSDL2 -lpthread -I /usr/local/include -L /usr/local/lib -lavformat -lavcodec -lswscale -lavutil -lavfilter -lswresample -lavdevice -lz -llzma -lva -lrt -lm 
+LIBS := -lSDL2 -lpthread -I /usr/local/include -L /usr/local/lib -lavformat -lavcodec -lswscale -lavutil -lavfilter -lswresample -lavdevice -lz -lrt -lm 
 
 .PHONY: clean all
 
@@ -22,10 +22,10 @@ $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS)  $(LIBS) -o $(TARGET)
 	make clean
 
-$(SOURCEDIR)/%.o: $(SOURCEDIR)/%.c
+$(SOURCEDIR)/%.o: $(SOURCEDIR)/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(SOURCEDIR)/%.d: $(SOURCEDIR)/%.c 
+$(SOURCEDIR)/%.d: $(SOURCEDIR)/%.cpp 
 	$(CXX) -M $(CXXFLAGS) $< > $@
 
 clean:

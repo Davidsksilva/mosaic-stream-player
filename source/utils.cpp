@@ -1,4 +1,6 @@
-#include "utils.h"
+#include "utils.hpp"
+
+void (*program_exit)(int ret);
 
 void register_exit(void (*cb)(int ret))
 {
@@ -113,7 +115,9 @@ AVDictionary **setup_find_stream_info_opts(AVFormatContext *s,
 
     if (!s->nb_streams)
         return NULL;
-    opts = av_mallocz_array(s->nb_streams, sizeof(*opts));
+        
+    opts = static_cast<AVDictionary **>(av_mallocz_array(s->nb_streams, sizeof(*opts)));
+
     if (!opts) {
         av_log(NULL, AV_LOG_ERROR,
                "Could not alloc memory for stream options.\n");

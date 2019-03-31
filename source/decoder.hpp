@@ -3,10 +3,12 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_thread.h>
+extern "C"{
 #include <libavformat/avformat.h>
 #include <libavdevice/avdevice.h>
-#include "packet.h"
-#include "frame.h"
+}
+#include "packet.hpp"
+#include "frame.hpp"
 
 typedef struct Decoder {
     AVPacket pkt;
@@ -27,7 +29,7 @@ void decoder_destroy(struct Decoder *d);
 
 void decoder_abort(struct Decoder *d, FrameQueue *fq);
 
-int decoder_start(Decoder *d, int (*fn)(void *), void *arg);
+int decoder_start(Decoder *d, int (*fn)(void *), void *arg, AVPacket * flush_pkt);
 
 void decoder_init(Decoder *d, AVCodecContext *avctx, PacketQueue *queue, SDL_cond *empty_queue_cond);
 

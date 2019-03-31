@@ -1,10 +1,10 @@
-
 #include <stdio.h>
-#include "structs.h"
-#include "utils.h"
-#include "config.h"
-#include "video_state_utils.h"
-#include "sdl_utils.h"
+#include "structs.hpp"
+#include "utils.hpp"
+#include "video_state_utils.hpp"
+#include "sdl_utils.hpp"
+#include "config.hpp"
+#include "udp_socket.hpp"
 
 /* current context */
 static int is_full_screen;
@@ -17,10 +17,22 @@ static SDL_Renderer *renderer;
 static SDL_RendererInfo renderer_info = {0};
 static SDL_AudioDeviceID audio_dev;
 
+
+
 AVDictionary *format_opts, *codec_opts, *resample_opts;
 
 static int find_stream_info = 4;
 unsigned sws_flags = SWS_BICUBIC;
+
+enum{
+    AV_SYNC_AUDIO_MASTER, /* default choice */
+    AV_SYNC_VIDEO_MASTER,
+    AV_SYNC_EXTERNAL_CLOCK, /* synchronize to an external clock */
+};
+
+int av_sync_type = AV_SYNC_AUDIO_MASTER;
+
+AVPacket flush_pkt;
 
 typedef struct master_video{
     int paused;
@@ -32,17 +44,10 @@ typedef struct master_video{
 
 MasterVideo* master_video;
 
-
-enum{
-    AV_SYNC_AUDIO_MASTER, /* default choice */
-    AV_SYNC_VIDEO_MASTER,
-    AV_SYNC_EXTERNAL_CLOCK, /* synchronize to an external clock */
-};
-
 /* options specified by the user */
 int exit_cond = 0;
 AVInputFormat *file_iformat;
-const char *input_filename;
+const char *input_filename = "udp://127.0.0.1:9001";
 const char *window_title;
 int default_width  = 1280;
 int default_height = 960;
@@ -78,8 +83,6 @@ double rdftspeed = 0.02;
 int64_t cursor_last_shown;
 int cursor_hidden = 0;
 
-const char* input_filename = "udp://127.0.0.1:9001";
-
 AVFrame frames[STREAMS_NUMBER];
 
 SDL_bool condition = SDL_FALSE;
@@ -89,8 +92,16 @@ SDL_cond *cond;
 SDL_mutex * force_refresh_mutex;
 SDL_mutex * show_mode_mutex;
 
-void update_display_frames(){
+AVIOContext * avio_context[STREAMS_NUMBER];
+unsigned char * bio_buffer[STREAMS_NUMBER];
 
+int read_packet(void *opaque, uint8_t *buf, int buf_size){
+	
+    UdpSocket * socket = static_cast<UdpSocket *>(opaque);
+
+    int n = socket->receivePacket(buf,buf_size);
+
+    return n;
 }
 
 int stream_has_enough_packets(AVStream *st, int stream_id, PacketQueue *queue) {
@@ -281,13 +292,13 @@ static void stream_component_close(VideoState *is, int stream_index)
 
 static int decode_interrupt_cb(void *ctx)
 {
-    VideoState *is = ctx;
+    VideoState *is = static_cast<VideoState*> (ctx);
     return is->abort_request;
 }
 
  int video_thread(void *arg)
 {
-    VideoState *is = arg;
+    VideoState *is = static_cast<VideoState*>(arg);
     AVFrame *frame = av_frame_alloc();
     double pts;
     double duration;
@@ -406,6 +417,8 @@ int stream_component_open(VideoState *is, int stream_index)
     int64_t channel_layout;
     int ret = 0;
     int stream_lowres = lowres;
+
+    
 
     if (stream_index < 0 || stream_index >= ic->nb_streams)
         return -1;
@@ -528,7 +541,7 @@ int stream_component_open(VideoState *is, int stream_index)
         is->video_st = ic->streams[stream_index];
 
         decoder_init(&is->viddec, avctx, &is->videoq, is->continue_read_thread);
-        if ((ret = decoder_start(&is->viddec, video_thread, is)) < 0)
+        if ((ret = decoder_start(&is->viddec, video_thread, is,&flush_pkt)) < 0)
             goto out;
         is->queue_attachments_req = 1;
         break;
@@ -561,7 +574,7 @@ void stream_seek(VideoState *is, int64_t pos, int64_t rel, int seek_by_bytes)
 /* this thread gets the stream from the disk or the network */
 static int read_thread(void *arg)
 {
-    VideoState *is = arg;
+    VideoState *is = static_cast<VideoState*>(arg);
     AVFormatContext *ic = NULL;
     int err, i, ret;
     int st_index[AVMEDIA_TYPE_NB];
@@ -572,6 +585,7 @@ static int read_thread(void *arg)
     SDL_mutex *wait_mutex = SDL_CreateMutex();
     int scan_all_pmts_set = 0;
     int64_t pkt_ts;
+    UdpSocket * socket;
 
     if (!wait_mutex) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateMutex(): %s\n", SDL_GetError());
@@ -586,6 +600,7 @@ static int read_thread(void *arg)
     is->eof = 0;
 
     ic = avformat_alloc_context();
+
     if (!ic) {
         av_log(NULL, AV_LOG_FATAL, "Could not allocate context.\n");
         ret = AVERROR(ENOMEM);
@@ -598,7 +613,16 @@ static int read_thread(void *arg)
         av_dict_set(&(is->format_opts), "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
         scan_all_pmts_set = 1;
     }
-    err = avformat_open_input(&ic, is->filename, is->iformat, &(is->format_opts));
+
+    bio_buffer[is->id]=(unsigned char *)av_malloc(4092);
+
+    socket = new UdpSocket(is->filename,1);
+    is->socket = socket;
+	avio_context[is->id]=avio_alloc_context(bio_buffer[is->id],4092,0,socket,&read_packet,NULL,NULL);
+
+	ic->pb= avio_context[is->id];
+
+    err = avformat_open_input(&ic, NULL, NULL, NULL);
 
     if (err < 0) {
         print_error(is->filename, err);
@@ -681,7 +705,7 @@ static int read_thread(void *arg)
     }
     for (i = 0; i < AVMEDIA_TYPE_NB; i++) {
         if (wanted_stream_spec[i] && st_index[i] == -1) {
-            av_log(NULL, AV_LOG_ERROR, "Stream specifier %s does not match any %s stream\n", wanted_stream_spec[i], av_get_media_type_string(i));
+            av_log(NULL, AV_LOG_ERROR, "Stream specifier %s does not match any %s stream\n", wanted_stream_spec[i], av_get_media_type_string(static_cast<AVMediaType>(i)));
             st_index[i] = INT_MAX;
         }
     }
@@ -779,15 +803,15 @@ static int read_thread(void *arg)
             } else {
                 if (is->audio_stream >= 0) {
                     packet_queue_flush(&is->audioq);
-                    packet_queue_put(&is->audioq, &flush_pkt);
+                    packet_queue_put(&is->audioq, &flush_pkt,&flush_pkt);
                 }
                 if (is->subtitle_stream >= 0) {
                     packet_queue_flush(&is->subtitleq);
-                    packet_queue_put(&is->subtitleq, &flush_pkt);
+                    packet_queue_put(&is->subtitleq, &flush_pkt,&flush_pkt);
                 }
                 if (is->video_stream >= 0) {
                     packet_queue_flush(&is->videoq);
-                    packet_queue_put(&is->videoq, &flush_pkt);
+                    packet_queue_put(&is->videoq, &flush_pkt, &flush_pkt);
                 }
                 if (is->seek_flags & AVSEEK_FLAG_BYTE) {
                    set_clock(&is->extclk, NAN, 0);
@@ -805,8 +829,8 @@ static int read_thread(void *arg)
                 AVPacket copy = { 0 };
                 if ((ret = av_packet_ref(&copy, &is->video_st->attached_pic)) < 0)
                     goto fail;
-                packet_queue_put(&is->videoq, &copy);
-                packet_queue_put_nullpacket(&is->videoq, is->video_stream);
+                packet_queue_put(&is->videoq, &copy, &flush_pkt);
+                packet_queue_put_nullpacket(&is->videoq, is->video_stream,&flush_pkt);
             }
             is->queue_attachments_req = 0;
         }
@@ -837,11 +861,11 @@ static int read_thread(void *arg)
         if (ret < 0) {
             if ((ret == AVERROR_EOF || avio_feof(ic->pb)) && !is->eof) {
                 if (is->video_stream >= 0)
-                    packet_queue_put_nullpacket(&is->videoq, is->video_stream);
+                    packet_queue_put_nullpacket(&is->videoq, is->video_stream,&flush_pkt);
                 if (is->audio_stream >= 0)
-                    packet_queue_put_nullpacket(&is->audioq, is->audio_stream);
+                    packet_queue_put_nullpacket(&is->audioq, is->audio_stream,&flush_pkt);
                 if (is->subtitle_stream >= 0)
-                    packet_queue_put_nullpacket(&is->subtitleq, is->subtitle_stream);
+                    packet_queue_put_nullpacket(&is->subtitleq, is->subtitle_stream, &flush_pkt);
                 is->eof = 1;
             }
             if (ic->pb && ic->pb->error)
@@ -862,12 +886,12 @@ static int read_thread(void *arg)
                 (double)(start_time != AV_NOPTS_VALUE ? start_time : 0) / 1000000
                 <= ((double)duration / 1000000);
         if (pkt->stream_index == is->audio_stream && pkt_in_play_range) {
-            packet_queue_put(&is->audioq, pkt);
+            packet_queue_put(&is->audioq, pkt, &flush_pkt);
         } else if (pkt->stream_index == is->video_stream && pkt_in_play_range
                    && !(is->video_st->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
-            packet_queue_put(&is->videoq, pkt);
+            packet_queue_put(&is->videoq, pkt,&flush_pkt);
         } else if (pkt->stream_index == is->subtitle_stream && pkt_in_play_range) {
-            packet_queue_put(&is->subtitleq, pkt);
+            packet_queue_put(&is->subtitleq, pkt,&flush_pkt);
         } else {
             av_packet_unref(pkt);
         }
@@ -1011,6 +1035,7 @@ static VideoState *stream_open(const char *filename, AVInputFormat *iformat, Vid
         
     
     is->filename = av_strdup(filename);
+    is->stream_address = av_strdup(filename);
 
     if (!is->filename){
         goto fail;
@@ -1142,8 +1167,7 @@ void video_image_display(VideoState *is)
         vp->flip_v = vp->frame->linesize[0] < 0;
     }
 
-    SDL_RenderCopyEx(renderer, is->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
-
+    SDL_RenderCopyEx(renderer, is->vid_texture, NULL, &rect, 0, NULL, static_cast<SDL_RendererFlip>(vp->flip_v ? SDL_FLIP_VERTICAL : 0));
 }
 
 void video_image_display_(VideoState ** videos)
@@ -1168,7 +1192,7 @@ void video_image_display_(VideoState ** videos)
                 vp->flip_v = vp->frame->linesize[0] < 0;
             }
 
-            SDL_RenderCopyEx(renderer, videos[i]->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
+            SDL_RenderCopyEx(renderer, videos[i]->vid_texture, NULL, &rect, 0, NULL, static_cast<SDL_RendererFlip>(vp->flip_v ? SDL_FLIP_VERTICAL : 0));
         }
     }
        
@@ -1312,7 +1336,7 @@ void update_video_pts(VideoState *is, double pts, int64_t pos, int serial) {
 /* called to display each frame */
 static void video_refresh(void *opaque, double *remaining_time)
 {
-    VideoState *is = opaque;
+    VideoState *is = static_cast<VideoState*>(opaque);
     double time;
 
     Frame *sp, *sp2;
@@ -1786,7 +1810,7 @@ void event_loop(VideoState **cur_stream)
 
 int event_loop2(void *arg)
 {
-    VideoState *cur_stream = arg;
+    VideoState *cur_stream = static_cast<VideoState*> (arg);
     SDL_Event event;
     double incr, pos, frac;
 

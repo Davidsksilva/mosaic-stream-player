@@ -1,12 +1,10 @@
-#include "video_state_utils.h"
+#include "video_state_utils.hpp"
 
 enum{
     AV_SYNC_AUDIO_MASTER, /* default choice */
     AV_SYNC_VIDEO_MASTER,
     AV_SYNC_EXTERNAL_CLOCK, /* synchronize to an external clock */
 };
-
-int av_sync_type = AV_SYNC_AUDIO_MASTER;
 
 double vp_duration(VideoState *is, Frame *vp, Frame *nextvp) {
     if (vp->serial == nextvp->serial) {

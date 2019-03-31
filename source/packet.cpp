@@ -1,4 +1,6 @@
-#include "packet.h"
+#include "packet.hpp"
+
+
 
 // Iniciar fila de pacotes
 int packet_queue_init(PacketQueue *q)
@@ -60,19 +62,20 @@ void packet_queue_destroy(PacketQueue *q)
 }
 
 // Coloca pacote na fila
-int packet_queue_put_private(PacketQueue *q, AVPacket *pkt)
+int packet_queue_put_private(PacketQueue *q, AVPacket *pkt,AVPacket* flush_pkt)
 {
     MyAVPacketList *pkt1;
 
     if (q->abort_request)
        return -1;
 
-    pkt1 = av_malloc(sizeof(MyAVPacketList));
+    pkt1 = static_cast<MyAVPacketList *>(av_malloc(sizeof(MyAVPacketList)));
+    
     if (!pkt1)
         return -1;
     pkt1->pkt = *pkt;
     pkt1->next = NULL;
-    if (pkt == &flush_pkt)
+    if (pkt == flush_pkt)
         q->serial++;
     pkt1->serial = q->serial;
 
@@ -89,38 +92,38 @@ int packet_queue_put_private(PacketQueue *q, AVPacket *pkt)
     return 0;
 }
 
-void packet_queue_start(PacketQueue *q)
+void packet_queue_start(PacketQueue *q,AVPacket** flush_pkt)
 {
     SDL_LockMutex(q->mutex);
     q->abort_request = 0;
-    packet_queue_put_private(q, &flush_pkt);
+    packet_queue_put_private(q, *flush_pkt, *flush_pkt);
     SDL_UnlockMutex(q->mutex);
 }
 
-// Englobamento da função de colocar pacotena fila
-int packet_queue_put(PacketQueue *q, AVPacket *pkt)
+// Englobamento da função de colocar pacote na fila
+int packet_queue_put(PacketQueue *q, AVPacket *pkt,AVPacket* flush_pkt)
 {
     int ret;
 
     SDL_LockMutex(q->mutex);
-    ret = packet_queue_put_private(q, pkt);
+    ret = packet_queue_put_private(q, pkt,flush_pkt);
     SDL_UnlockMutex(q->mutex);
 
-    if (pkt != &flush_pkt && ret < 0)
+    if (pkt != flush_pkt && ret < 0)
         av_packet_unref(pkt);
 
     return ret;
 }
 
 // Coloca pacote nulo na fila 
-int packet_queue_put_nullpacket(PacketQueue *q, int stream_index)
+int packet_queue_put_nullpacket(PacketQueue *q, int stream_index, AVPacket * flush_pkt)
 {
     AVPacket pkt1, *pkt = &pkt1;
     av_init_packet(pkt);
     pkt->data = NULL;
     pkt->size = 0;
     pkt->stream_index = stream_index;
-    return packet_queue_put(q, pkt);
+    return packet_queue_put(q, pkt,flush_pkt);
 }
 
 /* return < 0 if aborted, 0 if no packet and > 0 if packet.  */

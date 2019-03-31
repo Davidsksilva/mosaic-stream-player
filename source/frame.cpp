@@ -1,4 +1,5 @@
-#include "frame.h"
+#include "frame.hpp"
+
 
 // Iniciar fila de frames
 int frame_queue_init(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last)

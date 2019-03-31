@@ -1,10 +1,10 @@
 #ifndef VIDEO_STATE_UTILS_H
 #define VIDEO_STATE_UTILS_H
 
-#include "video_state.h"
-#include "sdl_utils.h"
+#include "video_state.hpp"
+#include "sdl_utils.hpp"
 
-int av_sync_type;
+
 
 double vp_duration(VideoState *is, Frame *vp, Frame *nextvp);
 

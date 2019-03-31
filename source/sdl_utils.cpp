@@ -1,4 +1,4 @@
-#include "sdl_utils.h"
+#include "sdl_utils.hpp"
 
 const struct TextureFormatEntry {
     enum AVPixelFormat format;
@@ -79,7 +79,7 @@ int upload_texture(SDL_Texture **tex, AVFrame *frame, struct SwsContext **img_co
     switch (sdl_pix_fmt) {
         case SDL_PIXELFORMAT_UNKNOWN:
             *img_convert_ctx = sws_getCachedContext(*img_convert_ctx,
-                frame->width, frame->height, frame->format, frame->width, frame->height,
+                frame->width, frame->height, static_cast<AVPixelFormat>(frame->format), frame->width, frame->height,
                 AV_PIX_FMT_BGRA, swss_flags, NULL, NULL, NULL);
             if (*img_convert_ctx != NULL) {
                

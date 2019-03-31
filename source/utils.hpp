@@ -1,13 +1,12 @@
 #ifndef UTILS_H
 #define UTILS_H
-
+extern "C" {
 #include "libavcodec/avcodec.h"
 #include "libavfilter/avfilter.h"
 #include "libavformat/avformat.h"
 #include "libswscale/swscale.h"
 #include "libavutil/opt.h"
-
-void (*program_exit)(int ret);
+}
 
 void register_exit(void (*cb)(int ret));
 

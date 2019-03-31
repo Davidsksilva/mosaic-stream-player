@@ -9,14 +9,15 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_thread.h>
 
-#include "packet.h"
-#include "clock.h"
-#include "frame.h"
-#include "decoder.h"
-#include "video_state.h"
+#include "packet.hpp"
+#include "clock.hpp"
+#include "frame.hpp"
+#include "decoder.hpp"
+#include "video_state.hpp"
 
 #include <assert.h>
 
+extern "C" {
 #include <libavutil/avstring.h>
 #include <libavutil/eval.h>
 #include <libavutil/mathematics.h>
@@ -33,7 +34,7 @@
 #include <libavutil/opt.h>
 #include <libavcodec/avfft.h>
 #include <libswresample/swresample.h>
-
+};
 
 #define MAX_QUEUE_SIZE (15 * 1024 * 1024)
 #define MIN_FRAMES 25
@@ -78,5 +79,9 @@
 #define CURSOR_HIDE_DELAY 1000000
 
 #define USE_ONEPASS_SUBTITLE_RENDER 1
+
+
+
+
 
 #endif

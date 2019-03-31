@@ -1,7 +1,8 @@
 #ifndef VIDEO_STATE_H
 #define VIDEO_STATE_H
 
-#include "structs.h"
+#include "structs.hpp"
+#include "udp_socket.hpp"
 
 enum ShowMode { 
   SHOW_MODE_NONE = -1, SHOW_MODE_VIDEO = 0, SHOW_MODE_WAVES, SHOW_MODE_RDFT, 
@@ -18,6 +19,11 @@ struct AudioParams {
 };
 
 typedef struct VideoState {
+
+    // custom
+    UdpSocket* socket;
+    char* stream_address;
+
     SDL_Thread *read_tid;
     AVInputFormat *iformat;
     int abort_request;

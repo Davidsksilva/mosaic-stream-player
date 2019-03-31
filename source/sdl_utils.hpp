@@ -2,10 +2,13 @@
 #define SDL_UTILS_H
 
 #include <SDL2/SDL.h>
+
+extern "C"{
 #include <libavutil/avassert.h>
 #include <libswscale/swscale.h>
 #include <libavformat/avformat.h>
 #include <libavdevice/avdevice.h>
+}
 
 int realloc_texture(SDL_Texture **texture, Uint32 new_format, int new_width, int new_height,
                                  SDL_BlendMode blendmode, int init_texture, SDL_Renderer *renderer);

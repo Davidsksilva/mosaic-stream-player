@@ -1,7 +1,10 @@
 #ifndef FRAME_H
 #define FRAME_H
-#include "packet.h"
+#include "packet.hpp"
+
+extern "C"{
 #include <libavformat/avformat.h>
+}
 #define VIDEO_PICTURE_QUEUE_SIZE 3
 #define SUBPICTURE_QUEUE_SIZE 16
 #define SAMPLE_QUEUE_SIZE 9

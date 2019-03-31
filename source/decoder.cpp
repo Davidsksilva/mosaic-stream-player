@@ -1,4 +1,4 @@
-#include "decoder.h"
+#include "decoder.hpp"
 
 void decoder_destroy(struct Decoder *d) {
     av_packet_unref(&d->pkt);
@@ -14,9 +14,9 @@ void decoder_abort(struct Decoder *d, FrameQueue *fq)
     packet_queue_flush(d->queue);
 }
 
-int decoder_start(Decoder *d, int (*fn)(void *), void *arg)
+int decoder_start(Decoder *d, int (*fn)(void *), void *arg,AVPacket * flush_pkt)
 {
-    packet_queue_start(d->queue);
+    packet_queue_start(d->queue,&flush_pkt);
     d->decoder_tid = SDL_CreateThread(fn, "decoder", arg);
     if (!d->decoder_tid) {
         av_log(NULL, AV_LOG_ERROR, "SDL_CreateThread(): %s\n", SDL_GetError());

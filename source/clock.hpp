@@ -2,8 +2,10 @@
 #ifndef CLOCK_H
 #define CLOCK_H
 
+extern "C"{
 #include <libswresample/swresample.h>
 #include <libavutil/time.h>
+}
 
 typedef struct Clock {
     double pts;           /* clock base */
