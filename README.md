@@ -13,7 +13,7 @@ What things you need to install the software and how to install them
 - SDL2 library
 - LibAV, FFMPEG C API
 
-To isntall SDL2 in ubuntu based linux distros:
+To install SDL2 in ubuntu based linux distros:
 ```
 sudo apt-get install libsdl2-dev
 ```
