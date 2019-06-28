@@ -1,5 +1,5 @@
 # Mosaic Player
-A mosaic UDP video stream player. Still under active development.
+A mosaic UDP video stream player using SDL and LibAV
 
 ## Getting Started
 
@@ -11,7 +11,7 @@ What things you need to install the software and how to install them
 
 - G++ compiler
 - SDL2 library
-- LibAV, FFMPEG C API
+- LibAV (FFMPEG C API)
 
 To install SDL2 in ubuntu based linux distros:
 ```
