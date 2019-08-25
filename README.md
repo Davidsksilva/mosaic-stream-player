@@ -1,5 +1,9 @@
 # Mosaic Player
-A mosaic UDP video stream player using SDL and LibAV
+A mosaic UDP video stream player using SDL and LibAV.
+
+## Introduction
+
+The program takes as input up to 4 video streams (like a webcam stream) decode it using 4 threads simultaneously, copy each frame to a SDL Texture splitted in 4 sections. The result is a mosaic displaying 4 streams simultaneously.
 
 ## Getting Started
 
@@ -20,7 +24,7 @@ sudo apt-get install libsdl2-dev
 
 ### Configuring
 
-On the current state, the player plays up tp 4 streams. To configure the number of stream edit `config.hpp` file under /source.
+On the current state, the player plays up to 4 streams. To configure the number of stream edit `config.hpp` file under /source.
 
 ### Running
 
