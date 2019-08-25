@@ -5,6 +5,8 @@ A mosaic UDP video stream player using SDL and LibAV.
 
 The program takes as input up to 4 video streams (like a webcam stream) decode it using 4 threads simultaneously, copy each frame to a SDL Texture splitted in 4 sections. The result is a mosaic displaying 4 streams simultaneously.
 
+![diagram](./diagram.png)
+
 ## Getting Started
 
 These instructions will get you a copy of the project up and running on your local machine for development and testing purposes.
